@@ -9,3 +9,5 @@ except DistributionNotFound:
     __version__ = 'unknown'
 finally:
     del get_distribution, DistributionNotFound
+
+from video_metadata.video_metadata import VideoMetadata, YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION
