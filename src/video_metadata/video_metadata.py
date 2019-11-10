@@ -1,6 +1,6 @@
 from googleapiclient.discovery import build
 import googleapiclient
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Tuple, Iterator
 YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
 
@@ -58,8 +58,17 @@ class VideoMetadata:
         :type client: Optional[googleapiclient.discovery.Resource]
         :raises: ValueError
         """
-        # The index of the next video, unless current video is the last.
-        self._index_next_video = 0
+        # The videos requested to lookup
+        self.requested_yt_ids: List[str] = []
+        self.current_item = None
+
+
+        if isinstance(video_id, str):
+            self.requested_yt_ids = [video_id]
+        elif isinstance(video_id, List):
+            self.requested_yt_ids = video_id
+        else:
+            raise ValueError("video_id is not a List or List")
 
         # The youtube data api client
         if client:
@@ -68,9 +77,6 @@ class VideoMetadata:
             self.client = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=dev_key)
         else:
             raise ValueError("`video_id` and `dev_key` must be specified together")
-
-        # Current video metadata
-        self._current_metadata = None
 
         if video_id:
             self._get_video_metadata(video_id)
@@ -83,9 +89,12 @@ class VideoMetadata:
             # The index of that list tells the current result..
             self._multi_metadata = [x for x in json["items"]]
 
+        self.iter_enumerate: Iterator[Tuple[int, dict]] = iter(enumerate(self._multi_metadata, start=0))
+        self.current_index = None
+
     def available(self) -> bool:
         """Did the API return a result that is useful?"""
-        if self._current_video():
+        if self.current_item:
             return True
         else:
             return False
@@ -95,35 +104,28 @@ class VideoMetadata:
         return len(self._multi_metadata)
 
     def __iter__(self):
-        # Resetting the index allows for reiteration of the dataset
-        self._index_next_video = 0
+        self.iter_enumerate: Iterator[Tuple[int, dict]] = iter(enumerate(self._multi_metadata, start=0))
         return self
 
     def __next__(self):
-
-        # The `current_metadata` variable will only update if there are more videos
-        # Using the incremented index leads to Off by One errors (IndexErrors)
-        try:
-            self._current_metadata = self._multi_metadata[self._index_next_video]
-        except IndexError:
-            raise StopIteration
-        self._index_next_video += 1
-
-        # self is returned as it contains `_current_metadata`.
-        # Returning `_current_metadata` would not allow for instance methods to operate on it.
+        self._current_index, self.current_item = next(self.iter_enumerate)
         return self
 
     def __getitem__(self, item):
         """A new instance is made containing only the results sliced
         `items` is added back to have the same appearance as an actual api response"""
-        return VideoMetadata(json={"items": self._multi_metadata[item]})
+        return self._multi_metadata[item]
+
 
     @property
     def id(self) -> str:
-        return self._current_video()["id"]
+        return self.requested_yt_ids[self._current_index]
+
+    def _current_video(self) -> dict:
+        return self._multi_metadata[self._current_index]
 
     @staticmethod
-    def _convert_list_to_comma_string(ids):
+    def _convert_list_to_comma_string(ids: Union[str, List[str]]) -> str:
         """Converts a list of video ids to format that the youtube api needs
         Comma separated video ids.
         """
@@ -136,10 +138,7 @@ class VideoMetadata:
                                            fields="items(id, snippet(categoryId,channelId,channelTitle,defaultAudioLanguage,defaultLanguage,description,liveBroadcastContent,publishedAt,tags,title))",
                                            id=self._convert_list_to_comma_string(yt_id)).execute()["items"]
         self._multi_metadata = _mark_unavailable_videos(yt_id, result)
-        self._current_metadata = self._multi_metadata[0]
-
-    def _current_video(self) -> dict:
-        return self._current_metadata
+        self._current_index = 0
 
     @property
     def category_id(self) -> str:
